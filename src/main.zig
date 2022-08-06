@@ -1,24 +1,23 @@
 const std = @import("std");
+const deflate = @import("deflate.zig");
 
-pub fn main() !void {
-    // Prints to stderr (it's a shortcut based on `std.io.getStdErr()`)
-    std.debug.print("All your {s} are belong to us.\n", .{"codebase"});
+pub fn main() !void {}
 
-    // stdout is for the actual output of your application, for example if you
-    // are implementing gzip, then only the compressed bytes should be sent to
-    // stdout, not any debugging messages.
-    const stdout_file = std.io.getStdOut().writer();
-    var bw = std.io.bufferedWriter(stdout_file);
-    const stdout = bw.writer();
+test "sanity" {
+    comptime var testData = [_]u8{ 0b00011110, 0b11111000, 0b10111100, 0b01100011, 0b10011100, 0b10001000, 0b00000000, 0b00000000, 0b00110000, 0b01000000, 0b00001100, 0b11010100, 0b10101101, 0b01001010, 0b01111000, 0b11111111, 0b01101001, 0b00011100, 0b01101000, 0b01101001, 0b00111010, 0b01111000, 0b00101001, 0b11010011, 0b10110110, 0b10000000 };
 
-    try stdout.print("Run `zig build test` to run the tests.\n", .{});
+    comptime { // can't be asked rewriting the above array to have the bits in the right order
+        for (testData[0..]) |*byte| {
+            byte.* = @bitReverse(u8, byte.*);
+        }
+    }
 
-    try bw.flush(); // don't forget to flush!
-}
+    const expectedString = [_]u8{ 'A', 'B', 'C', 'D', 'E', 'A', 'B', 'C', 'D', ' ', 'A', 'B', 'C', 'D', 'E', 'A', 'B', 'C', 'D' };
+    var allocator = std.testing.allocator;
 
-test "simple test" {
-    var list = std.ArrayList(i32).init(std.testing.allocator);
-    defer list.deinit(); // try commenting this out and see if zig detects the memory leak!
-    try list.append(42);
-    try std.testing.expectEqual(@as(i32, 42), list.pop());
+    var outputStream = try deflate.decompress(&allocator, testData[0..]);
+    defer allocator.free(outputStream);
+
+    try std.testing.expect(outputStream.len == expectedString.len);
+    try std.testing.expectEqualSlices(u8, outputStream, expectedString[0..]);
 }
