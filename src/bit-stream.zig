@@ -185,16 +185,35 @@ test "correct results returned for specific byte stream using new method" {
 }
 
 test "correct results returned for specific byte stream using new method on 2 bytes" {
-    var data = [_]u8{0b01111000, 0b11001010};
+    var data = [_]u8{ 0b01111000, 0b11001010 };
     var stream = BitStream.fromBytes(data[0..]);
-    var bits : u64 = stream.getNBits(4) orelse unreachable;
+    var bits: u64 = stream.getNBits(4) orelse unreachable;
     bits = stream.getNBits(3) orelse try unreachable;
     bits = stream.getNBits(5) orelse try unreachable;
-    var expected : u64 = 0b00010100;
+    var expected: u64 = 0b00010100;
     try std.testing.expectEqual(expected, bits);
 
     bits = stream.getNBits(4) orelse try unreachable;
     expected = 0b00001100;
+    try std.testing.expectEqual(expected, bits);
+
+    var bitsOpt = stream.getNBits(1);
+    if (bitsOpt != null) {
+        try std.testing.expect(false);
+    }
+}
+
+test "correct results returned for specific byte stream using new method on 3 bytes where we cross two byte boundaries" {
+    var data = [_]u8{ 0b01111000, 0b11001010, 0b10101010 };
+    var stream = BitStream.fromBytes(data[0..]);
+    var bits: u64 = stream.getNBits(12) orelse unreachable;
+
+    bits = stream.getNBits(10) orelse try unreachable;
+    var expected: u64 = 0b1010101100;
+    try std.testing.expectEqual(expected, bits);
+
+    bits = stream.getNBits(2) orelse try unreachable;
+    expected = 0b00000010;
     try std.testing.expectEqual(expected, bits);
 
     var bitsOpt = stream.getNBits(1);

@@ -21,22 +21,4 @@ pub fn main() !void {
     // }
     // var after = std.time.milliTimestamp();
     // std.log.debug("{}ms", .{after - before});
-
-
-    var data = [_]u8{0b01111000, 0b11001010};
-    var stream = bstream.BitStream.fromBytes(data[0..]);
-    var bits : u64 = stream.getNBits(4) orelse unreachable;
-    bits = stream.getNBits(3) orelse try unreachable;
-    bits = stream.getNBits(5) orelse try unreachable;
-    var expected : u64 = 0b00010100;
-    try std.testing.expectEqual(expected, bits);
-
-    bits = stream.getNBits(4) orelse try unreachable;
-    expected = 0b00001100;
-    try std.testing.expectEqual(expected, bits);
-
-    var bitsOpt = stream.getNBits(1);
-    if (bitsOpt != null) {
-        try std.testing.expect(false);
-    }
 }
