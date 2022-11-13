@@ -119,41 +119,41 @@ pub const BitStreamOld = struct {
     }
 };
 
-// test "compare random results between old and new methods" {
-//     const seed = @truncate(u64, @bitCast(u128, std.time.nanoTimestamp()));
-//     var prng = std.rand.DefaultPrng.init(seed);
+test "compare random results between old and new methods" {
+    const seed = @truncate(u64, @bitCast(u128, std.time.nanoTimestamp()));
+    var prng = std.rand.DefaultPrng.init(seed);
 
-//     const NUM_BYTES = 64 * 200;
-//     var bytesArr: [NUM_BYTES]u8 = undefined;
-//     var i: u32 = 0;
-//     while (i < 64 * 200) : (i += 1) {
-//         bytesArr[i] = prng.random().int(u8);
-//     }
-//     var bytes = bytesArr[0..];
+    const NUM_BYTES = 64 * 200;
+    var bytesArr: [NUM_BYTES]u8 = undefined;
+    var i: u32 = 0;
+    while (i < 64 * 200) : (i += 1) {
+        bytesArr[i] = prng.random().int(u8);
+    }
+    var bytes = bytesArr[0..];
 
-//     var bitStreamOld = BitStreamOld.fromBytes(bytes);
-//     var bitStream = BitStream.fromBytes(bytes);
+    var bitStreamOld = BitStreamOld.fromBytes(bytes);
+    var bitStream = BitStream.fromBytes(bytes);
 
-//     var numBits: u6 = 0;
-//     var bitsLeft: u64 = NUM_BYTES;
-//     while (bitsLeft > 0) {
-//         numBits = prng.random().int(u4);
-//         if (numBits == 0) {
-//             numBits = 1;
-//         }
+    var numBits: u6 = 0;
+    var bitsLeft: u64 = NUM_BYTES;
+    while (bitsLeft > 0) {
+        numBits = prng.random().int(u4);
+        if (numBits == 0) {
+            numBits = 1;
+        }
 
-//         if (numBits > bitsLeft) {
-//             numBits = @truncate(u6, bitsLeft);
-//         }
+        if (numBits > bitsLeft) {
+            numBits = @truncate(u6, bitsLeft);
+        }
 
-//         bitsLeft -= numBits;
+        bitsLeft -= numBits;
 
-//         var bitsFromOld = bitStreamOld.getNBits(numBits);
-//         var bitsFromNew = bitStream.getNBits(numBits);
+        var bitsFromOld = bitStreamOld.getNBits(numBits);
+        var bitsFromNew = bitStream.getNBits(numBits);
 
-//         try std.testing.expectEqual(bitsFromOld, bitsFromNew);
-//     }
-// }
+        try std.testing.expectEqual(bitsFromOld, bitsFromNew);
+    }
+}
 
 test "correct results returned for specific byte stream using old method" {
     var data = [_]u8{0b01111000};
