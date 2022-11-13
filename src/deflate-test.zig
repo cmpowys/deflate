@@ -19,3 +19,18 @@ test "sanity" {
     try std.testing.expect(outputStream.len == expectedString.len);
     try std.testing.expectEqualSlices(u8, outputStream, expectedString[0..]);
 }
+
+// test "BitStream.getNBits" {
+//     var data = [_]u8{ 0b01111000 };
+//     var stream = deflate.BitStream.init(data[0..]);
+//     var bits = stream.getNBits(4) orelse 0;
+//     var expected : u64 = 0b00001000;
+//     try std.testing.expectEqual(expected, bits);
+
+//     var data2 = [_]u8{ 0b10011111, 0b11111101 };
+//     stream = deflate.BitStream.init(data2[0..]);
+//     _ = stream.getNBits(6);
+//     bits = stream.getNBits(4) orelse 0;
+//     expected = 0b0000110;
+//     try std.testing.expectEqual(expected, bits);
+// }

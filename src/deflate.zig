@@ -389,24 +389,24 @@ fn addHuffNode(huffTree: *HuffNode, arena: *std.heap.ArenaAllocator, codeLength:
     root.value = value;
 }
 
-const BitStream = struct {
+pub const BitStream = struct {
     const Self = @This();
     byteStream: []u8,
     currentByte: ?u8,
     bitPosition: u8,
 
-    fn init(byteStream: []u8) Self {
+    pub fn init(byteStream: []u8) Self {
         return Self{ .byteStream = byteStream, .currentByte = null, .bitPosition = 0 };
     }
 
-    fn getNextBitsWithError(self: *Self, numBits: u32, fieldName: []const u8) !u64 {
-        return self.getNBits(numBits) orelse {
+    pub fn getNextBitsWithError(self: *Self, numBits: u32, fieldName: []const u8) !u64 {
+        return self.getNBitsOld(numBits) orelse {
             std.log.err("Invalid deflate header, not enough bits for '{s}'", .{fieldName});
             return Error.InvalidDeflateStream;
         };
     }
 
-    fn getNBits(self: *Self, numBits: u32) ?u64 {
+    fn getNBitsOld(self: *Self, numBits: u32) ?u64 {
         // TODO make performant
         // TODO need to err if you try to get bytes whilst in the "middle" of a byte
         var result: u64 = 0;
@@ -432,6 +432,47 @@ const BitStream = struct {
             }
         }
 
+        return result;
+    }
+
+    pub fn getNBits(self: *Self, numBits: u32) ?u64 {
+        if (numBits == 0) {
+            return null;
+        }
+
+        std.debug.assert(numBits <= 8 * @sizeOf(u64)); // TODO make type generic to u8 etc.
+
+        var copy = Self{ .bitPosition = self.bitPosition, .currentByte = self.currentByte, .byteStream = self.byteStream };
+        var result: u64 = 0;
+        var remainingBits = numBits;
+        const bitCount = @sizeOf(u8) * 8;
+
+        while (remainingBits > 0) {
+            if (self.currentByte == null) {
+                self.currentByte = self.getNextByte() orelse return null;
+            }
+            var byte: u8 = self.currentByte orelse return null;
+            const bitsRemaining = bitCount - self.bitPosition;
+            const bitsToAdd = @minimum(bitsRemaining, remainingBits);
+            remainingBits -= bitsToAdd;
+            const fullBits: u8 = 0xff;
+
+            var mask1: u8 = fullBits << @intCast(u3, self.bitPosition);
+            var mask2: u8 = fullBits >> @intCast(u3, bitCount - (self.bitPosition + bitsToAdd));
+            var mask: u8 = mask1 & mask2; // TODO can combine to remove temporary masks
+            var currentValue: u8 = (byte & mask) >> @intCast(u3, self.bitPosition);
+            result <<= @intCast(u6, bitsToAdd);
+            result |= currentValue;
+
+            if (@intCast(u16, self.bitPosition) + @intCast(u16, bitsToAdd) >= bitCount) {
+                self.currentByte = null;
+            }
+            self.bitPosition = (self.bitPosition + @intCast(u8, bitsToAdd)) % bitCount; // expected to overflow
+        }
+
+        var oldResult = copy.getNBitsOld(numBits);
+        _ = oldResult;
+        std.debug.assert(oldResult == result);
         return result;
     }
 
