@@ -12,10 +12,8 @@ pub const BitStream = struct {
     }
 
     pub fn getNBits(self: *Self, numBits: u32) ?u64 {
-        _ = self;
-        _ = numBits;
 
-        if (numBits == 0) return null;
+        if (numBits == 0) return 0;
 
         if (self.currentByte == null) {
             self.currentByte = self.getNextByte() orelse return null;
@@ -33,16 +31,6 @@ pub const BitStream = struct {
         mask &= zero_mask;
         var result: u64 = byte & mask;
         result >>= @truncate(u3, self.bitPosition);
-
-        //01111000 -> mask wanted for bitpos=0,numbits=4 = 00001111
-        // mask1 = 11111111 = max << bitPosition
-        // mask2 = 00001111 =     max >> 4 (numBitsLocal)
-
-        //01111000 -> bitPosition = 4, numBits = 3 want 01110000
-        // mask1 = 11110000
-        // mask2 = 01111111
-        // 11111111 >> 3 = 00011111 = zm >> (1) (8 - 4 - 3)
-        // so total mask would be 01110000 so we want to shift >> 4 times (bitPosition)?
 
         self.bitPosition += numBitsLocal;
 
@@ -89,7 +77,7 @@ pub const BitStreamOld = struct {
         return byte;
     }
 
-    pub fn getNBits(self: *Self, n: u6) ?u64 {
+    pub fn getNBits(self: *Self, n: u32) ?u64 {
         // TODO make performant
         // TODO need to err if you try to get bytes whilst in the "middle" of a byte
         var result: u64 = 0;
@@ -229,4 +217,12 @@ test "nothing returned for empty byte stream" {
     if (returned != null) {
         try std.testing.expect(false);
     }
+}
+
+test "0 returned when 0 bits requested" {
+    var data = [_]u8{ 0b01111000, 0b11001010, 0b10101010 };
+    var bitStream = BitStream.fromBytes(data[0..]);
+    var returned = bitStream.getNBits(0) orelse unreachable;
+    var expected : u64 = 0;
+    try std.testing.expectEqual(expected, returned);
 }

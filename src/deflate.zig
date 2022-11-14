@@ -1,5 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const BitStream = @import("bit-stream.zig").BitStream;
 
 pub const Error = error{ InvalidDeflateStream, Unsupported };
 
@@ -7,7 +8,7 @@ pub fn decompress(allocator: *Allocator, bytes: []u8) ![]u8 { // TODO make outpu
     var arena = std.heap.ArenaAllocator.init(allocator.*);
     defer arena.deinit();
 
-    var bits = BitStream.init(bytes);
+    var bits = BitStream.fromBytes(bytes);
 
     const header = try getDeflateHeader(&bits);
 
@@ -60,18 +61,18 @@ const max_lit_length_table_length = 286;
 const max_dist_length_table_length = 32;
 
 fn getDeflateHeader(bits: *BitStream) !DeflateHeader { // TODO could just make the DeflateHeader a packed struct and cast it to the first two bytes of the byte stream
-    var compressionMethod = try bits.getNextBitsWithError(4, "Compression Method");
-    var log2WindowSize = try bits.getNextBitsWithError(4, "Log 2 Window Size");
-    var fCheck = try bits.getNextBitsWithError(5, "fCheck");
-    var fDict = try bits.getNextBitsWithError(1, "fDict");
-    var fLevel = try bits.getNextBitsWithError(2, "fLevel");
+    var compressionMethod = try getNextBitsWithError(bits, 4, "Compression Method");
+    var log2WindowSize = try getNextBitsWithError(bits, 4, "Log 2 Window Size");
+    var fCheck = try getNextBitsWithError(bits, 5, "fCheck");
+    var fDict = try getNextBitsWithError(bits, 1, "fDict");
+    var fLevel = try getNextBitsWithError(bits, 2, "fLevel");
 
     return DeflateHeader{ .compressionMethod = @intCast(u8, compressionMethod), .log2WindowSize = @intCast(u8, log2WindowSize), .fCheck = @intCast(u8, fCheck), .fDict = @intCast(u8, fDict), .fLevel = @intCast(u8, fLevel) };
 }
 
 fn getBlockHeader(bits: *BitStream) !BlockHeader {
-    var isFinal = try bits.getNextBitsWithError(1, "IsFinalBlock");
-    var blockType = try bits.getNextBitsWithError(2, "BlockType");
+    var isFinal = try getNextBitsWithError(bits, 1, "IsFinalBlock");
+    var blockType = try getNextBitsWithError(bits, 2, "BlockType");
     return BlockHeader{ .isFinal = isFinal == 1, .blockType = @intToEnum(BlockType, blockType) };
 }
 
@@ -117,13 +118,13 @@ fn decompressRestOfBlock(bits: *BitStream, output: *std.ArrayList(u8), huffTrees
             const litIndex = litCode - 257;
             const baseLength = baseLengthsForDistanceCodes[litIndex];
             const numExtraLengthBits = extraLengthsForDistanceCodes[litIndex];
-            const extraLength = try bits.getNextBitsWithError(numExtraLengthBits, "LitCode Extra Length Bits");
+            const extraLength = try getNextBitsWithError(bits, numExtraLengthBits, "LitCode Extra Length Bits");
             const length = baseLength + extraLength;
 
             const distCode = try getNextCode(huffTrees.distCodes, bits);
             const baseDistance = baseDistanceForDistanceCodes[distCode];
             const numExtraDistanceBits = extraDistanceForDistanceCodes[distCode];
-            const extraDistance = try bits.getNextBitsWithError(numExtraDistanceBits, "DistCode Extra Distance Bits");
+            const extraDistance = try getNextBitsWithError(bits, numExtraDistanceBits, "DistCode Extra Distance Bits");
             const distance = baseDistance + extraDistance;
 
             const outputSize = output.items.len;
@@ -142,9 +143,9 @@ fn decompressRestOfBlock(bits: *BitStream, output: *std.ArrayList(u8), huffTrees
 }
 
 fn getDynamicHuffTrees(arena: *std.heap.ArenaAllocator, bits: *BitStream) !HuffTrees {
-    const numberOfLiteralLengthCodes = (try bits.getNextBitsWithError(5, "Number Of Literal Length Codes")) + 257;
-    const numberOfDistanceCodes = (try bits.getNextBitsWithError(5, "Number Of Distance Codes")) + 1;
-    const numberOfCodeLengthCodes = (try bits.getNextBitsWithError(4, "Number Of Code Length Codes")) + 4;
+    const numberOfLiteralLengthCodes = (try getNextBitsWithError(bits, 5, "Number Of Literal Length Codes")) + 257;
+    const numberOfDistanceCodes = (try getNextBitsWithError(bits, 5, "Number Of Distance Codes")) + 1;
+    const numberOfCodeLengthCodes = (try getNextBitsWithError(bits, 4, "Number Of Code Length Codes")) + 4;
 
     const codeLengthEncoding = try getCodeLengthCodes(arena, bits, numberOfCodeLengthCodes);
     const codeHuffTree = try generateHuffmanTree(arena, codeLengthEncoding);
@@ -172,7 +173,7 @@ fn getCodeLengthCodes(arena: *std.heap.ArenaAllocator, bits: *BitStream, numberO
     var codeLengthIndex: usize = 0;
     while (codeLengthIndex < numberOfCodeLengthCodes) : (codeLengthIndex += 1) {
         const actualCodeLengthIndex = codeLengthTableOrdering[codeLengthIndex];
-        const codeLength = @intCast(u32, try bits.getNextBitsWithError(3, "Code Length"));
+        const codeLength = @intCast(u32, try getNextBitsWithError(bits, 3, "Code Length"));
         codeLengthEncoding[actualCodeLengthIndex] = codeLength;
     }
 
@@ -193,15 +194,15 @@ fn getEncodedHuffCodes(bits: *BitStream, arena: *std.heap.ArenaAllocator, huffTr
             switch (code) {
                 16 => {
                     code = prevCode;
-                    repeats = (try bits.getNextBitsWithError(2, "HuffMan Repeats")) + 3;
+                    repeats = (try getNextBitsWithError(bits, 2, "HuffMan Repeats")) + 3;
                 },
                 17 => {
                     code = 0;
-                    repeats = (try bits.getNextBitsWithError(3, "HuffMan Repeats")) + 3;
+                    repeats = (try getNextBitsWithError(bits, 3, "HuffMan Repeats")) + 3;
                 },
                 18 => {
                     code = 0;
-                    repeats = (try bits.getNextBitsWithError(7, "HuffMan Repeats")) + 11;
+                    repeats = (try getNextBitsWithError(bits, 7, "HuffMan Repeats")) + 11;
                 },
                 else => {
                     std.log.debug("Unexpected code generated from huffman tree {}, should be < 19", .{code});
@@ -389,99 +390,106 @@ fn addHuffNode(huffTree: *HuffNode, arena: *std.heap.ArenaAllocator, codeLength:
     root.value = value;
 }
 
-pub const BitStream = struct {
-    const Self = @This();
-    byteStream: []u8,
-    currentByte: ?u8,
-    bitPosition: u8,
+fn getNextBitsWithError(self: *BitStream, numBits: u32, fieldName: []const u8) !u64 {
+    return self.getNBits(numBits) orelse {
+        std.log.err("Invalid deflate header, not enough bits for '{s}'", .{fieldName});
+        return Error.InvalidDeflateStream;
+    };
+}
 
-    pub fn init(byteStream: []u8) Self {
-        return Self{ .byteStream = byteStream, .currentByte = null, .bitPosition = 0 };
-    }
+// pub const BitStream = struct {
+//     const Self = @This();
+//     byteStream: []u8,
+//     currentByte: ?u8,
+//     bitPosition: u8,
 
-    pub fn getNextBitsWithError(self: *Self, numBits: u32, fieldName: []const u8) !u64 {
-        return self.getNBitsOld(numBits) orelse {
-            std.log.err("Invalid deflate header, not enough bits for '{s}'", .{fieldName});
-            return Error.InvalidDeflateStream;
-        };
-    }
+//     pub fn init(byteStream: []u8) Self {
+//         return Self{ .byteStream = byteStream, .currentByte = null, .bitPosition = 0 };
+//     }
 
-    fn getNBitsOld(self: *Self, numBits: u32) ?u64 {
-        // TODO make performant
-        // TODO need to err if you try to get bytes whilst in the "middle" of a byte
-        var result: u64 = 0;
-        var bitNumber: u64 = 0;
-        const one: u64 = 1;
+//     pub fn getNextBitsWithError(self: *Self, numBits: u32, fieldName: []const u8) !u64 {
+//         return self.getNBitsOld(numBits) orelse {
+//             std.log.err("Invalid deflate header, not enough bits for '{s}'", .{fieldName});
+//             return Error.InvalidDeflateStream;
+//         };
+//     }
 
-        if (self.currentByte == null) {
-            self.currentByte = self.getNextByte() orelse return null;
-            self.bitPosition = 0;
-        }
+//     fn getNBitsOld(self: *Self, numBits: u32) ?u64 {
+//         // TODO make performant
+//         // TODO need to err if you try to get bytes whilst in the "middle" of a byte
+//         var result: u64 = 0;
+//         var bitNumber: u64 = 0;
+//         const one: u64 = 1;
 
-        while (bitNumber < numBits) : (bitNumber += 1) {
-            const byte = self.currentByte orelse return null;
+//         if (self.currentByte == null) {
+//             self.currentByte = self.getNextByte() orelse return null;
+//             self.bitPosition = 0;
+//         }
 
-            const nextBit: u16 = if ((byte & (one << @intCast(u6, self.bitPosition))) != 0) 1 else 0;
-            self.bitPosition += 1;
+//         while (bitNumber < numBits) : (bitNumber += 1) {
+//             const byte = self.currentByte orelse return null;
 
-            result |= (nextBit << @intCast(u4, bitNumber));
+//             const nextBit: u16 = if ((byte & (one << @intCast(u6, self.bitPosition))) != 0) 1 else 0;
+//             self.bitPosition += 1;
 
-            if (self.bitPosition == 8) {
-                self.currentByte = self.getNextByte();
-                self.bitPosition = 0;
-            }
-        }
+//             result |= (nextBit << @intCast(u4, bitNumber));
 
-        return result;
-    }
+//             if (self.bitPosition == 8) {
+//                 self.currentByte = self.getNextByte();
+//                 self.bitPosition = 0;
+//             }
+//         }
 
-    pub fn getNBits(self: *Self, numBits: u32) ?u64 {
-        if (numBits == 0) {
-            return null;
-        }
+//         return result;
+//     }
 
-        std.debug.assert(numBits <= 8 * @sizeOf(u64)); // TODO make type generic to u8 etc.
+//     pub fn getNBits(self: *Self, numBits: u32) ?u64 {
+//         if (numBits == 0) {
+//             return null;
+//         }
 
-        var copy = Self{ .bitPosition = self.bitPosition, .currentByte = self.currentByte, .byteStream = self.byteStream };
-        var result: u64 = 0;
-        var remainingBits = numBits;
-        const bitCount = @sizeOf(u8) * 8;
+//         std.debug.assert(numBits <= 8 * @sizeOf(u64)); // TODO make type generic to u8 etc.
 
-        while (remainingBits > 0) {
-            if (self.currentByte == null) {
-                self.currentByte = self.getNextByte() orelse return null;
-            }
-            var byte: u8 = self.currentByte orelse return null;
-            const bitsRemaining = bitCount - self.bitPosition;
-            const bitsToAdd = @minimum(bitsRemaining, remainingBits);
-            remainingBits -= bitsToAdd;
-            const fullBits: u8 = 0xff;
+//         var copy = Self{ .bitPosition = self.bitPosition, .currentByte = self.currentByte, .byteStream = self.byteStream };
+//         var result: u64 = 0;
+//         var remainingBits = numBits;
+//         const bitCount = @sizeOf(u8) * 8;
 
-            var mask1: u8 = fullBits << @intCast(u3, self.bitPosition);
-            var mask2: u8 = fullBits >> @intCast(u3, bitCount - (self.bitPosition + bitsToAdd));
-            var mask: u8 = mask1 & mask2; // TODO can combine to remove temporary masks
-            var currentValue: u8 = (byte & mask) >> @intCast(u3, self.bitPosition);
-            result <<= @intCast(u6, bitsToAdd);
-            result |= currentValue;
+//         while (remainingBits > 0) {
+//             if (self.currentByte == null) {
+//                 self.currentByte = self.getNextByte() orelse return null;
+//             }
+//             var byte: u8 = self.currentByte orelse return null;
+//             const bitsRemaining = bitCount - self.bitPosition;
+//             const bitsToAdd = @minimum(bitsRemaining, remainingBits);
+//             remainingBits -= bitsToAdd;
+//             const fullBits: u8 = 0xff;
 
-            if (@intCast(u16, self.bitPosition) + @intCast(u16, bitsToAdd) >= bitCount) {
-                self.currentByte = null;
-            }
-            self.bitPosition = (self.bitPosition + @intCast(u8, bitsToAdd)) % bitCount; // expected to overflow
-        }
+//             var mask1: u8 = fullBits << @intCast(u3, self.bitPosition);
+//             var mask2: u8 = fullBits >> @intCast(u3, bitCount - (self.bitPosition + bitsToAdd));
+//             var mask: u8 = mask1 & mask2; // TODO can combine to remove temporary masks
+//             var currentValue: u8 = (byte & mask) >> @intCast(u3, self.bitPosition);
+//             result <<= @intCast(u6, bitsToAdd);
+//             result |= currentValue;
 
-        var oldResult = copy.getNBitsOld(numBits);
-        _ = oldResult;
-        std.debug.assert(oldResult == result);
-        return result;
-    }
+//             if (@intCast(u16, self.bitPosition) + @intCast(u16, bitsToAdd) >= bitCount) {
+//                 self.currentByte = null;
+//             }
+//             self.bitPosition = (self.bitPosition + @intCast(u8, bitsToAdd)) % bitCount; // expected to overflow
+//         }
 
-    fn getNextByte(self: *Self) ?u8 {
-        if (self.byteStream.len == 0) {
-            return null;
-        }
-        const byte = self.byteStream[0];
-        self.byteStream = self.byteStream[1..];
-        return byte;
-    }
-};
+//         var oldResult = copy.getNBitsOld(numBits);
+//         _ = oldResult;
+//         std.debug.assert(oldResult == result);
+//         return result;
+//     }
+
+//     fn getNextByte(self: *Self) ?u8 {
+//         if (self.byteStream.len == 0) {
+//             return null;
+//         }
+//         const byte = self.byteStream[0];
+//         self.byteStream = self.byteStream[1..];
+//         return byte;
+//     }
+// };
