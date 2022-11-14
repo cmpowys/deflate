@@ -2,8 +2,7 @@ const std = @import("std");
 const deflate = @import("deflate.zig");
 const bstream = @import("bit-stream.zig");
 
-
-fn profileBitStream(bitStreamStruct : anytype) !void {
+fn profileBitStream(bitStreamStruct: anytype) !void {
     const seed = @truncate(u64, @bitCast(u128, std.time.nanoTimestamp()));
     var prng = std.rand.DefaultPrng.init(seed);
 
@@ -19,7 +18,6 @@ fn profileBitStream(bitStreamStruct : anytype) !void {
 
     var stream = bitStreamStruct.fromBytes(bytes);
 
-    
     var before = std.time.milliTimestamp();
     var numBits: u6 = 0;
     var bitsLeft: u64 = NUM_BYTES;
@@ -35,7 +33,7 @@ fn profileBitStream(bitStreamStruct : anytype) !void {
 
         bitsLeft -= numBits;
 
-        var bits = stream.getNBits(numBits); 
+        var bits = stream.getNBits(numBits);
         _ = bits;
     }
 
@@ -44,7 +42,6 @@ fn profileBitStream(bitStreamStruct : anytype) !void {
 }
 
 pub fn main() !void {
-
     try profileBitStream(bstream.BitStream);
     try profileBitStream(bstream.BitStreamOld);
 
