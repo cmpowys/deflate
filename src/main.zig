@@ -1,6 +1,7 @@
 const std = @import("std");
 const deflate = @import("deflate.zig");
 const bstream = @import("bit-stream.zig");
+const HuffNode = @import("huffman.zig").HuffNode;
 
 fn profileBitStream(bitStreamStruct: anytype) !void {
     const seed = @truncate(u64, @bitCast(u128, std.time.nanoTimestamp()));
@@ -41,25 +42,6 @@ fn profileBitStream(bitStreamStruct: anytype) !void {
     std.log.debug("{}ms", .{after - before});
 }
 
-fn sanity_check() !void {
-    comptime var testData = [_]u8{ 0b00011110, 0b11111000, 0b10111100, 0b01100011, 0b10011100, 0b10001000, 0b00000000, 0b00000000, 0b00110000, 0b01000000, 0b00001100, 0b11010100, 0b10101101, 0b01001010, 0b01111000, 0b11111111, 0b01101001, 0b00011100, 0b01101000, 0b01101001, 0b00111010, 0b01111000, 0b00101001, 0b11010011, 0b10110110, 0b10000000 };
-
-    comptime { // can't be asked rewriting the above array to have the bits in the right order
-        for (testData[0..]) |*byte| {
-            byte.* = @bitReverse(u8, byte.*);
-        }
-    }
-
-    const expectedString = [_]u8{ 'A', 'B', 'C', 'D', 'E', 'A', 'B', 'C', 'D', ' ', 'A', 'B', 'C', 'D', 'E', 'A', 'B', 'C', 'D' };
-    var allocator = std.heap.page_allocator;
-
-    var outputStream = try deflate.decompress(&allocator, testData[0..]);
-    defer allocator.free(outputStream);
-
-    try std.testing.expect(outputStream.len == expectedString.len);
-    try std.testing.expectEqualSlices(u8, outputStream, expectedString[0..]);
-}
-
 fn profileDeflate() !void {
     comptime var testData = [_]u8{ 0b00011110, 0b11111000, 0b10111100, 0b01100011, 0b10011100, 0b10001000, 0b00000000, 0b00000000, 0b00110000, 0b01000000, 0b00001100, 0b11010100, 0b10101101, 0b01001010, 0b01111000, 0b11111111, 0b01101001, 0b00011100, 0b01101000, 0b01101001, 0b00111010, 0b01111000, 0b00101001, 0b11010011, 0b10110110, 0b10000000 };
 
@@ -81,53 +63,34 @@ fn profileDeflate() !void {
     std.log.debug("{}ms", .{after - before});
 }
 
-fn test3Bytes() !void {
-    var data = [_]u8{ 0b01111000, 0b11001010, 0b10101010 };
-    var stream = bstream.BitStream.fromBytes(data[0..]);
-    var bits: u64 = stream.getNBits(12) orelse unreachable;
+fn profileHuffTreeDecode() !void {
+    const N = 5000000;
+    var allocator = std.heap.page_allocator;
+    var codes = [19]u32{ 4, 3, 0, 2, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 2, 0 };
+    var bytes = [_]u8{ 0b00000000, 0b00000110, 0b00000111, 0b00001001, 0b00111100, 0b00100110, 0b01001100 };
+    var tree = try HuffNode.generateFromCodes(allocator, codes[0..]);
+    defer tree.deinit();
 
-    bits = stream.getNBits(10) orelse try unreachable;
-    var expected: u64 = 0b1010101100;
-    try std.testing.expectEqual(expected, bits);
+    var before = std.time.milliTimestamp();
 
-    bits = stream.getNBits(2) orelse try unreachable;
-    expected = 0b00000010;
-    try std.testing.expectEqual(expected, bits);
+    var iteration: i64 = 0;
 
-    var bitsOpt = stream.getNBits(1);
-    if (bitsOpt != null) {
-        try std.testing.expect(false);
+    while (iteration < N) : (iteration += 1) {
+        var bitStream = &bstream.BitStream.fromBytes(bytes[0..]);
+
+        var count: i64 = 0;
+        while (count < 15) : (count += 1) {
+            var code = try tree.getNextCode(bitStream);
+            _ = code;
+        }
     }
-}
 
-fn test8ByteBoundary() !void {
-    var data = [_]u8{ 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b10100000, 0b00000011, 0b00000110, 0b00000000 };
-    //01100000011101
-    //01100000011
-    var stream = bstream.BitStream.fromBytes(data[0..]);
-
-    var bits = stream.getNBits(61) orelse try unreachable;
-    var expected: u64 = 0;
-    try std.testing.expectEqual(expected, bits);
-
-    bits = stream.getNBits(14) orelse try unreachable;
-    expected = 0b11000000011101;
-    try std.testing.expectEqual(expected, bits);
-
-    bits = stream.getNBits(13) orelse try unreachable;
-    expected = 0;
-    try std.testing.expectEqual(expected, bits);
-
-    var bitsOpt = stream.getNBits(1);
-    if (bitsOpt != null) {
-        try std.testing.expect(false);
-    }
+    var after = std.time.milliTimestamp();
+    std.log.debug("{}ms", .{after - before});
 }
 
 pub fn main() !void {
-    //try profileBitStream(bstream.BitStream);
-    try sanity_check();
+    // try profileBitStream(bstream.BitStream);
     // try profileDeflate();
-    // try test3Bytes();
-    // try test8ByteBoundary();
+    try profileHuffTreeDecode();
 }
