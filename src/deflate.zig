@@ -1,6 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const BitStream = @import("bit-stream.zig").BitStream;
+const HuffNode = @import("huffman.zig").HuffNode;
 
 pub const Error = error{ InvalidDeflateStream, Unsupported };
 
@@ -39,22 +40,6 @@ const BlockHeader = struct { isFinal: bool, blockType: BlockType };
 const DeflateHeader = struct { compressionMethod: u8, log2WindowSize: u8, fCheck: u8, fDict: u8, fLevel: u8 };
 
 const HuffTrees = struct { litCodes: *HuffNode, distCodes: *HuffNode };
-
-const HuffNode = struct {
-    value: i16,
-    left: ?*HuffNode,
-    right: ?*HuffNode,
-
-    fn new(allocator: std.mem.Allocator) !*HuffNode {
-        var result = try allocator.create(HuffNode);
-        result.left = null;
-        result.right = null;
-        result.value = -1;
-        return result;
-    }
-
-    // TODO put the other huffnode related methods in here like getnextcode etc.addHuffNode
-};
 
 const max_code_length_table_length = 19;
 const max_lit_length_table_length = 286;
@@ -108,7 +93,7 @@ fn decompressRestOfBlock(bits: *BitStream, output: *std.ArrayList(u8), huffTrees
     const extraDistanceForDistanceCodes = [_]u8{ 0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13 };
 
     while (true) {
-        const litCode = try getNextCode(huffTrees.litCodes, bits);
+        const litCode = try huffTrees.litCodes.getNextCode(bits);
 
         if (litCode < 256) {
             try output.append(@intCast(u8, litCode));
@@ -121,7 +106,7 @@ fn decompressRestOfBlock(bits: *BitStream, output: *std.ArrayList(u8), huffTrees
             const extraLength = try getNextBitsWithError(bits, numExtraLengthBits, "LitCode Extra Length Bits");
             const length = baseLength + extraLength;
 
-            const distCode = try getNextCode(huffTrees.distCodes, bits);
+            const distCode = try huffTrees.distCodes.getNextCode(bits);
             const baseDistance = baseDistanceForDistanceCodes[distCode];
             const numExtraDistanceBits = extraDistanceForDistanceCodes[distCode];
             const extraDistance = try getNextBitsWithError(bits, numExtraDistanceBits, "DistCode Extra Distance Bits");
@@ -187,7 +172,7 @@ fn getEncodedHuffCodes(bits: *BitStream, arena: *std.heap.ArenaAllocator, huffTr
     var prevCode: u32 = 0;
 
     while (codes.items.len < numCodesExpected) {
-        var code: u32 = try getNextCode(huffTree, bits);
+        var code: u32 = try huffTree.getNextCode(bits);
         var repeats: u64 = 1;
 
         if (code > 15) {
@@ -262,7 +247,7 @@ fn generateHuffmanTree(arena: *std.heap.ArenaAllocator, codes: []u32) !*HuffNode
     var codeCounts = try getCodeCounts(arena, codes);
 
     var huffTree = try arena.allocator().create(HuffNode);
-    huffTree = try HuffNode.new(arena.allocator());
+    huffTree = try HuffNode.init(arena.allocator());
 
     var codeLength: u32 = 1;
     while (codeLength < codeCounts.maxCodeLength + 1) : (codeLength += 1) {
@@ -273,7 +258,7 @@ fn generateHuffmanTree(arena: *std.heap.ArenaAllocator, codes: []u32) !*HuffNode
             if (code != codeLength)
                 continue;
 
-            try addHuffNode(huffTree, arena, codeLength, codeCounts.nextCode[codeLength], @intCast(i16, codeIndex));
+            try huffTree.addHuffNode(codeLength, codeCounts.nextCode[codeLength], @intCast(u16, codeIndex));
             codeCounts.nextCode[codeLength] += 1;
         }
     }
@@ -318,76 +303,6 @@ fn getCodeCounts(arena: *std.heap.ArenaAllocator, codes: []u32) !CodeCounts {
     }
 
     return CodeCounts{ .codeCount = codeCount, .nextCode = nextCode, .maxCodeLength = maxCodeLength };
-}
-
-fn getNextCode(huffTree: *HuffNode, bits: *BitStream) !u16 {
-    var root = huffTree;
-    while (true) {
-        if (root.value >= 0) {
-            return @intCast(u16, root.value);
-        } else if (root.right == null and root.left == null) {
-            std.log.err("Unexepcted error when generating huffman codes", .{});
-            return Error.InvalidDeflateStream;
-        }
-
-        const nextBit = bits.getNBits(1) orelse { // why is this not get bits with error?
-            std.log.err("Unexepcted end of deflate stream", .{});
-            return Error.InvalidDeflateStream;
-        };
-
-        std.debug.assert(nextBit < 2);
-        const isZero = nextBit == 0;
-
-        if (isZero) {
-            root = root.left orelse {
-                std.log.err("Unexpected bit value when generate huffman codes in deflate stream", .{});
-                return Error.InvalidDeflateStream;
-            };
-        } else {
-            root = root.right orelse {
-                std.log.err("Unexpected bit value when generate huffman codes in deflate stream", .{});
-                return Error.InvalidDeflateStream;
-            };
-        }
-    }
-}
-
-fn addHuffNode(huffTree: *HuffNode, arena: *std.heap.ArenaAllocator, codeLength: u32, code: u32, value: i16) !void {
-    std.debug.assert(codeLength > 0);
-    std.debug.assert(value >= 0);
-
-    var depth: u64 = 0;
-    var root = huffTree;
-    while (depth < codeLength) {
-        if (root.value != -1) {
-            std.log.err("Error when trying to add code {}, with length {}, value {}, reached unexpected terminal node {}", .{ code, codeLength, value, root.value });
-            return Error.InvalidDeflateStream;
-        }
-
-        const one: u64 = 1;
-        const isZero = (code & (one << (@intCast(u6, codeLength - depth - 1)))) == 0; // TODO clean up these integer widths and messy casts
-
-        if (isZero) {
-            if (root.left == null) {
-                root.left = try HuffNode.new(arena.allocator());
-            }
-            root = root.left orelse unreachable;
-        } else {
-            if (root.right == null) {
-                root.right = try HuffNode.new(arena.allocator());
-            }
-            root = root.right orelse unreachable;
-        }
-
-        depth += 1;
-    }
-
-    if (root.left != null or root.right != null or root.value != -1) {
-        std.log.err("Error when trying to create huffman tree for code  {}, length {}, value {} expected terminal node", .{ code, codeLength, value });
-        return Error.InvalidDeflateStream;
-    }
-
-    root.value = value;
 }
 
 fn getNextBitsWithError(self: *BitStream, numBits: u32, fieldName: []const u8) !u64 {

@@ -125,11 +125,9 @@ fn test8ByteBoundary() !void {
 }
 
 pub fn main() !void {
-    // try profileBitStream(bstream.BitStream);
-    // try profileBitStream(bstream.BitStreamMiddleAged);
-    // try profileBitStream(bstream.BitStreamOld);
-    // try sanity_check();
-    //try profileDeflate();
+    //try profileBitStream(bstream.BitStream);
+    try sanity_check();
+    // try profileDeflate();
     // try test3Bytes();
     // try test8ByteBoundary();
 }
