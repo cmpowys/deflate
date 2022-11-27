@@ -3,12 +3,12 @@ const BitStream = @import("bit-stream.zig").BitStream;
 
 pub const Error = error{ UnexpectedErrorAddingHuffNode, InvalidUnderlyingBitStream };
 
-pub const HuffNode = struct {
+pub const HuffEncoderDecoder = struct {
     const Self = @This();
 
     value: ?u16,
-    left: ?*HuffNode,
-    right: ?*HuffNode,
+    left: ?*Self,
+    right: ?*Self,
     allocator: std.mem.Allocator,
 
     pub fn generateFromCodes(allocator: std.mem.Allocator, codes: []u32) !*Self {
@@ -17,7 +17,7 @@ pub const HuffNode = struct {
         var codeCounts = try CodeCounts.getCodeCounts(allocator, codes);
         defer codeCounts.deinit(allocator);
 
-        var huffTree = try HuffNode.init(allocator);
+        var huffTree = try Self.init(allocator);
         errdefer huffTree.deinit();
 
         var codeLength: u32 = 0;
@@ -29,7 +29,7 @@ pub const HuffNode = struct {
                 if (code != codeLength)
                     continue;
 
-                try huffTree.addHuffNode(codeLength, codeCounts.nextCode[codeLength], @intCast(u16, codeIndex));
+                try huffTree.addCodePoint(codeLength, codeCounts.nextCode[codeLength], @intCast(u16, codeIndex));
                 codeCounts.nextCode[codeLength] += 1;
             }
         }
@@ -37,8 +37,8 @@ pub const HuffNode = struct {
         return huffTree;
     }
 
-    pub fn init(allocator: std.mem.Allocator) !*HuffNode {
-        var result = try allocator.create(HuffNode);
+    pub fn init(allocator: std.mem.Allocator) !*Self {
+        var result = try allocator.create(Self);
         result.left = null;
         result.right = null;
         result.value = null;
@@ -59,7 +59,7 @@ pub const HuffNode = struct {
         self.allocator.destroy(self);
     }
 
-    pub fn addHuffNode(self: *Self, codeLength: u32, code: u32, value: u16) !void {
+    pub fn addCodePoint(self: *Self, codeLength: u32, code: u32, value: u16) !void {
         std.debug.assert(codeLength > 0);
 
         var depth: u64 = 0;
@@ -74,12 +74,12 @@ pub const HuffNode = struct {
 
             if (isZero) {
                 if (root.left == null) {
-                    root.left = try HuffNode.init(self.allocator);
+                    root.left = try Self.init(self.allocator);
                 }
                 root = root.left orelse unreachable;
             } else {
                 if (root.right == null) {
-                    root.right = try HuffNode.init(self.allocator);
+                    root.right = try Self.init(self.allocator);
                 }
                 root = root.right orelse unreachable;
             }
@@ -94,7 +94,7 @@ pub const HuffNode = struct {
         root.value = value;
     }
 
-    pub fn getNextCode(self: *HuffNode, bits: *BitStream) !u16 {
+    pub fn getNextCode(self: *Self, bits: *BitStream) !u16 {
         var root = self;
 
         while (true) {
@@ -176,7 +176,7 @@ const CodeCounts = struct {
 
 test "can construct and destroy a hufftree" {
     var allocator = std.testing.allocator;
-    var tree = try HuffNode.init(allocator);
+    var tree = try HuffEncoderDecoder.init(allocator);
     defer tree.deinit();
 }
 
@@ -184,11 +184,11 @@ test "Test simple huff tree usage with example from sanity check" {
     var codes = [19]u32{ 4, 3, 0, 2, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 2, 0 };
     var bytes = [5]u8{ 0b00001000, 0b00101101, 0b11011011, 0b00100100, 0b00101101 };
     var bitStream = &BitStream.fromBytes(bytes[0..]);
-    var tree = try HuffNode.generateFromCodes(std.testing.allocator, codes[0..]);
+    var tree = try HuffEncoderDecoder.generateFromCodes(std.testing.allocator, codes[0..]);
     defer tree.deinit();
 
-    var count : i64  = 0;
-    while (count < 16)  : (count += 1) {
+    var count: i64 = 0;
+    while (count < 16) : (count += 1) {
         var code = try tree.getNextCode(bitStream);
         _ = code;
     }

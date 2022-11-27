@@ -1,7 +1,7 @@
 const std = @import("std");
 const deflate = @import("deflate.zig");
 const bstream = @import("bit-stream.zig");
-const HuffNode = @import("huffman.zig").HuffNode;
+const HuffEncoderDecoder = @import("huffman.zig").HuffEncoderDecoder;
 
 fn profileBitStream(bitStreamStruct: anytype) !void {
     const seed = @truncate(u64, @bitCast(u128, std.time.nanoTimestamp()));
@@ -72,21 +72,21 @@ fn profileHuffTreeDecode() !void {
     var list = std.ArrayList(u8).init(allocator);
     defer list.deinit();
 
-    var iteration : i64 = 0;
-    while(iteration < N) : (iteration += 1) {
+    var iteration: i64 = 0;
+    while (iteration < N) : (iteration += 1) {
         try list.appendSlice(bytes[0..]);
     }
 
     var bitStream = &bstream.BitStream.fromBytes(list.items);
 
-    var tree = try HuffNode.generateFromCodes(allocator, codes[0..]);
+    var tree = try HuffEncoderDecoder.generateFromCodes(allocator, codes[0..]);
     defer tree.deinit();
 
     var before = std.time.milliTimestamp();
 
     iteration = 0;
     const NUM_CODE_POINTS_PER_ITERATION = 16;
-    while (iteration < N*NUM_CODE_POINTS_PER_ITERATION) : (iteration += 1) {
+    while (iteration < N * NUM_CODE_POINTS_PER_ITERATION) : (iteration += 1) {
         var code = try tree.getNextCode(bitStream);
         _ = code;
     }

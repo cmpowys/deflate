@@ -1,7 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const BitStream = @import("bit-stream.zig").BitStream;
-const HuffNode = @import("huffman.zig").HuffNode;
+const HuffEncoderDecoder = @import("huffman.zig").HuffEncoderDecoder;
 
 pub const Error = error{ InvalidDeflateStream, Unsupported };
 
@@ -39,7 +39,7 @@ const BlockHeader = struct { isFinal: bool, blockType: BlockType };
 
 const DeflateHeader = struct { compressionMethod: u8, log2WindowSize: u8, fCheck: u8, fDict: u8, fLevel: u8 };
 
-const HuffTrees = struct { litCodes: *HuffNode, distCodes: *HuffNode };
+const HuffEncoderDecoderPair = struct { litCodes: *HuffEncoderDecoder, distCodes: *HuffEncoderDecoder };
 
 const max_code_length_table_length = 19;
 const max_lit_length_table_length = 286;
@@ -68,12 +68,12 @@ fn processBlock(bits: *BitStream, output: *std.ArrayList(u8), arena: *std.heap.A
     switch (blockHeader.blockType) {
         BlockType.UnCompressed => {},
         BlockType.Fixed => {
-            const huffTrees = try getFixedHuffTrees(arena);
-            try decompressRestOfBlock(bits, output, huffTrees);
+            const huffPair = try getFixedHuffEncoderDecoderPair(arena);
+            try decompressRestOfBlock(bits, output, huffPair);
         },
         BlockType.Dynamic => {
-            const huffTrees = try getDynamicHuffTrees(arena, bits);
-            try decompressRestOfBlock(bits, output, huffTrees);
+            const huffPair = try getDynamicHuffPairs(arena, bits);
+            try decompressRestOfBlock(bits, output, huffPair);
         },
         else => {
             std.log.err("Deflate block header has block type : 3, which is an error", .{});
@@ -84,7 +84,7 @@ fn processBlock(bits: *BitStream, output: *std.ArrayList(u8), arena: *std.heap.A
     return !blockHeader.isFinal;
 }
 
-fn decompressRestOfBlock(bits: *BitStream, output: *std.ArrayList(u8), huffTrees: HuffTrees) !void {
+fn decompressRestOfBlock(bits: *BitStream, output: *std.ArrayList(u8), huffPair: HuffEncoderDecoderPair) !void {
 
     // TODO simplify table with a 2d array
     const baseLengthsForDistanceCodes = [_]u16{ 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258 };
@@ -93,7 +93,7 @@ fn decompressRestOfBlock(bits: *BitStream, output: *std.ArrayList(u8), huffTrees
     const extraDistanceForDistanceCodes = [_]u8{ 0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13 };
 
     while (true) {
-        const litCode = try huffTrees.litCodes.getNextCode(bits);
+        const litCode = try huffPair.litCodes.getNextCode(bits);
 
         if (litCode < 256) {
             try output.append(@intCast(u8, litCode));
@@ -106,7 +106,7 @@ fn decompressRestOfBlock(bits: *BitStream, output: *std.ArrayList(u8), huffTrees
             const extraLength = try getNextBitsWithError(bits, numExtraLengthBits, "LitCode Extra Length Bits");
             const length = baseLength + extraLength;
 
-            const distCode = try huffTrees.distCodes.getNextCode(bits);
+            const distCode = try huffPair.distCodes.getNextCode(bits);
             const baseDistance = baseDistanceForDistanceCodes[distCode];
             const numExtraDistanceBits = extraDistanceForDistanceCodes[distCode];
             const extraDistance = try getNextBitsWithError(bits, numExtraDistanceBits, "DistCode Extra Distance Bits");
@@ -127,23 +127,23 @@ fn decompressRestOfBlock(bits: *BitStream, output: *std.ArrayList(u8), huffTrees
     }
 }
 
-fn getDynamicHuffTrees(arena: *std.heap.ArenaAllocator, bits: *BitStream) !HuffTrees {
+fn getDynamicHuffPairs(arena: *std.heap.ArenaAllocator, bits: *BitStream) !HuffEncoderDecoderPair {
     const numberOfLiteralLengthCodes = (try getNextBitsWithError(bits, 5, "Number Of Literal Length Codes")) + 257;
     const numberOfDistanceCodes = (try getNextBitsWithError(bits, 5, "Number Of Distance Codes")) + 1;
     const numberOfCodeLengthCodes = (try getNextBitsWithError(bits, 4, "Number Of Code Length Codes")) + 4;
 
     const codeLengthEncoding = try getCodeLengthCodes(arena, bits, numberOfCodeLengthCodes);
-    const codeHuffTree = try HuffNode.generateFromCodes(arena.allocator(), codeLengthEncoding);
+    const codeHuffEncoderDecoder = try HuffEncoderDecoder.generateFromCodes(arena.allocator(), codeLengthEncoding);
 
-    const encodedLitCodes = try getEncodedHuffCodes(bits, arena, codeHuffTree, numberOfLiteralLengthCodes);
-    const litCodeTree = try HuffNode.generateFromCodes(arena.allocator(), encodedLitCodes);
+    const encodedLitCodes = try getEncodedHuffCodes(bits, arena, codeHuffEncoderDecoder, numberOfLiteralLengthCodes);
+    const litCodeHuffEncoderDecoder = try HuffEncoderDecoder.generateFromCodes(arena.allocator(), encodedLitCodes);
 
-    const encodedDistCodes = try getEncodedHuffCodes(bits, arena, codeHuffTree, numberOfDistanceCodes);
-    const distCodeTree = try HuffNode.generateFromCodes(arena.allocator(), encodedDistCodes);
+    const encodedDistCodes = try getEncodedHuffCodes(bits, arena, codeHuffEncoderDecoder, numberOfDistanceCodes);
+    const distCodeEncoderDecoder = try HuffEncoderDecoder.generateFromCodes(arena.allocator(), encodedDistCodes);
 
-    return HuffTrees{
-        .litCodes = litCodeTree,
-        .distCodes = distCodeTree,
+    return HuffEncoderDecoderPair{
+        .litCodes = litCodeHuffEncoderDecoder,
+        .distCodes = distCodeEncoderDecoder,
     };
 }
 
@@ -165,14 +165,14 @@ fn getCodeLengthCodes(arena: *std.heap.ArenaAllocator, bits: *BitStream, numberO
     return codeLengthEncoding;
 }
 
-fn getEncodedHuffCodes(bits: *BitStream, arena: *std.heap.ArenaAllocator, huffTree: *HuffNode, numCodesExpected: usize) ![]u32 {
+fn getEncodedHuffCodes(bits: *BitStream, arena: *std.heap.ArenaAllocator, huff: *HuffEncoderDecoder, numCodesExpected: usize) ![]u32 {
     std.debug.assert(numCodesExpected > 0);
 
     var codes = try std.ArrayList(u32).initCapacity(arena.allocator(), numCodesExpected);
     var prevCode: u32 = 0;
 
     while (codes.items.len < numCodesExpected) {
-        var code: u32 = try huffTree.getNextCode(bits);
+        var code: u32 = try huff.getNextCode(bits);
         var repeats: u64 = 1;
 
         if (code > 15) {
@@ -207,8 +207,8 @@ fn getEncodedHuffCodes(bits: *BitStream, arena: *std.heap.ArenaAllocator, huffTr
     return codes.toOwnedSlice();
 }
 
-fn getFixedHuffTrees(arena: *std.heap.ArenaAllocator) !HuffTrees {
-    var huffTrees: HuffTrees = undefined;
+fn getFixedHuffEncoderDecoderPair(arena: *std.heap.ArenaAllocator) !HuffEncoderDecoderPair {
+    var huffPair: HuffEncoderDecoderPair = undefined;
     comptime var encodedLitCodes: [max_lit_length_table_length]u32 = undefined;
     comptime var encodedDistCodes: [max_dist_length_table_length]u32 = undefined;
 
@@ -235,10 +235,10 @@ fn getFixedHuffTrees(arena: *std.heap.ArenaAllocator) !HuffTrees {
     }
 
     // TODO need a comptime allocator so this can all be done in comptime
-    huffTrees.litCodes = try HuffNode.generateFromCodes(arena.allocator(), encodedLitCodes[0..]);
-    huffTrees.distCodes = try HuffNode.generateFromCodes(arena.allocator(), encodedDistCodes[0..]);
+    huffPair.litCodes = try HuffEncoderDecoder.generateFromCodes(arena.allocator(), encodedLitCodes[0..]);
+    huffPair.distCodes = try HuffEncoderDecoder.generateFromCodes(arena.allocator(), encodedDistCodes[0..]);
 
-    return huffTrees;
+    return huffPair;
 }
 
 fn getNextBitsWithError(self: *BitStream, numBits: u32, fieldName: []const u8) !u64 {
