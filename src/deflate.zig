@@ -133,13 +133,13 @@ fn getDynamicHuffTrees(arena: *std.heap.ArenaAllocator, bits: *BitStream) !HuffT
     const numberOfCodeLengthCodes = (try getNextBitsWithError(bits, 4, "Number Of Code Length Codes")) + 4;
 
     const codeLengthEncoding = try getCodeLengthCodes(arena, bits, numberOfCodeLengthCodes);
-    const codeHuffTree = try generateHuffmanTree(arena, codeLengthEncoding);
+    const codeHuffTree = try HuffNode.generateFromCodes(arena.allocator(), codeLengthEncoding);
 
     const encodedLitCodes = try getEncodedHuffCodes(bits, arena, codeHuffTree, numberOfLiteralLengthCodes);
-    const litCodeTree = try generateHuffmanTree(arena, encodedLitCodes);
+    const litCodeTree = try HuffNode.generateFromCodes(arena.allocator(), encodedLitCodes);
 
     const encodedDistCodes = try getEncodedHuffCodes(bits, arena, codeHuffTree, numberOfDistanceCodes);
-    const distCodeTree = try generateHuffmanTree(arena, encodedDistCodes);
+    const distCodeTree = try HuffNode.generateFromCodes(arena.allocator(), encodedDistCodes);
 
     return HuffTrees{
         .litCodes = litCodeTree,
@@ -235,74 +235,10 @@ fn getFixedHuffTrees(arena: *std.heap.ArenaAllocator) !HuffTrees {
     }
 
     // TODO need a comptime allocator so this can all be done in comptime
-    huffTrees.litCodes = try generateHuffmanTree(arena, encodedLitCodes[0..]);
-    huffTrees.distCodes = try generateHuffmanTree(arena, encodedDistCodes[0..]);
+    huffTrees.litCodes = try HuffNode.generateFromCodes(arena.allocator(), encodedLitCodes[0..]);
+    huffTrees.distCodes = try HuffNode.generateFromCodes(arena.allocator(), encodedDistCodes[0..]);
 
     return huffTrees;
-}
-
-fn generateHuffmanTree(arena: *std.heap.ArenaAllocator, codes: []u32) !*HuffNode {
-    std.debug.assert(codes.len > 0);
-
-    var codeCounts = try getCodeCounts(arena, codes);
-
-    var huffTree = try arena.allocator().create(HuffNode);
-    huffTree = try HuffNode.init(arena.allocator());
-
-    var codeLength: u32 = 1;
-    while (codeLength < codeCounts.maxCodeLength + 1) : (codeLength += 1) {
-        if (codeCounts.codeCount[codeLength] == 0)
-            continue;
-
-        for (codes) |code, codeIndex| {
-            if (code != codeLength)
-                continue;
-
-            try huffTree.addHuffNode(codeLength, codeCounts.nextCode[codeLength], @intCast(u16, codeIndex));
-            codeCounts.nextCode[codeLength] += 1;
-        }
-    }
-
-    return huffTree;
-}
-
-const CodeCounts = struct {
-    codeCount: []u32,
-    nextCode: []u32,
-    maxCodeLength: u32,
-};
-
-fn getCodeCounts(arena: *std.heap.ArenaAllocator, codes: []u32) !CodeCounts {
-    var maxCodeLength: u32 = codes[0];
-
-    for (codes) |encodingLength| {
-        maxCodeLength = @maximum(maxCodeLength, encodingLength);
-    }
-
-    var codeCount = try arena.allocator().alloc(u32, maxCodeLength + 1);
-    for (codeCount) |*count| {
-        count.* = 0;
-    }
-
-    for (codes) |encodingLength| {
-        if (encodingLength > 0) {
-            codeCount[encodingLength] += 1;
-        }
-    }
-
-    var nextCode = try arena.allocator().alloc(u32, maxCodeLength + 1);
-    for (nextCode) |*code| {
-        code.* = 0;
-    }
-
-    var codeLength: usize = 1;
-    var code: u32 = 0;
-    while (codeLength < maxCodeLength + 1) : (codeLength += 1) {
-        code = (code + codeCount[codeLength - 1]) << 1;
-        nextCode[codeLength] = code;
-    }
-
-    return CodeCounts{ .codeCount = codeCount, .nextCode = nextCode, .maxCodeLength = maxCodeLength };
 }
 
 fn getNextBitsWithError(self: *BitStream, numBits: u32, fieldName: []const u8) !u64 {
