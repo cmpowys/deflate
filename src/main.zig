@@ -67,22 +67,28 @@ fn profileHuffTreeDecode() !void {
     const N = 5000000;
     var allocator = std.heap.page_allocator;
     var codes = [19]u32{ 4, 3, 0, 2, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 2, 0 };
-    var bytes = [_]u8{ 0b00000000, 0b00000110, 0b00000111, 0b00001001, 0b00111100, 0b00100110, 0b01001100 };
+    var bytes = [_]u8{ 0b00001000, 0b00101101, 0b11011011, 0b00100100, 0b00101101 };
+
+    var list = std.ArrayList(u8).init(allocator);
+    defer list.deinit();
+
+    var iteration : i64 = 0;
+    while(iteration < N) : (iteration += 1) {
+        try list.appendSlice(bytes[0..]);
+    }
+
+    var bitStream = &bstream.BitStream.fromBytes(list.items);
+
     var tree = try HuffNode.generateFromCodes(allocator, codes[0..]);
     defer tree.deinit();
 
     var before = std.time.milliTimestamp();
 
-    var iteration: i64 = 0;
-
-    while (iteration < N) : (iteration += 1) {
-        var bitStream = &bstream.BitStream.fromBytes(bytes[0..]);
-
-        var count: i64 = 0;
-        while (count < 15) : (count += 1) {
-            var code = try tree.getNextCode(bitStream);
-            _ = code;
-        }
+    iteration = 0;
+    const NUM_CODE_POINTS_PER_ITERATION = 16;
+    while (iteration < N*NUM_CODE_POINTS_PER_ITERATION) : (iteration += 1) {
+        var code = try tree.getNextCode(bitStream);
+        _ = code;
     }
 
     var after = std.time.milliTimestamp();
