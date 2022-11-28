@@ -3,12 +3,17 @@ const BitStream = @import("bit-stream.zig").BitStream;
 
 pub const Error = error{ UnexpectedErrorAddingHuffNode, InvalidUnderlyingBitStream };
 
+const DEPTH_THRESHOLD: usize = 8;
+const DECODER_CACHE_SIZE: usize = std.math.pow(usize, 2, DEPTH_THRESHOLD);
+
 const MappingVal = struct { value: u16, depth: u16, codePoint: u32 };
+const CachedMappingValue = struct { value: u16, depth: u16 };
 
 pub const HuffDecoder = struct {
     const Self = @This();
 
     mapping: std.ArrayList(MappingVal),
+    cachedMapping: [DECODER_CACHE_SIZE]?CachedMappingValue,
     allocator: std.mem.Allocator,
     maxDepth: usize,
 
@@ -23,23 +28,11 @@ pub const HuffDecoder = struct {
         decoder.mapping = mapping;
         decoder.allocator = allocator;
         decoder.maxDepth = @truncate(u16, maxDepth);
+        decoder.cachedMapping = [_]?CachedMappingValue{null} ** DECODER_CACHE_SIZE;
         errdefer (allocator.destroy(decoder));
         try huff.populateDecoderMaps(decoder);
 
         return decoder;
-    }
-
-    pub fn debugPrintMappingAsBinary(self: *Self, requiredValue: i32) void {
-        var counter: usize = 0;
-        while (counter < self.mapping.len) : (counter += 1) {
-            var mappingVal = self.mapping[counter];
-            var depth = mappingVal.depth;
-            var value = mappingVal.value;
-
-            if (requiredValue < 0 or requiredValue == value) {
-                std.log.debug("{b}, counter={}, depth={}, value={}", .{ counter, counter, depth, value });
-            }
-        }
     }
 
     pub fn deinit(self: *Self) void {
@@ -49,7 +42,7 @@ pub const HuffDecoder = struct {
 
     pub fn initFromCodes(allocator: std.mem.Allocator, codes: []u32) !*Self {
         var huffEncoderDecoder = try HuffEncoderDecoder.generateFromCodes(allocator, codes);
-        defer huffEncoderDecoder.deinit(); 
+        defer huffEncoderDecoder.deinit();
 
         return HuffDecoder.init(huffEncoderDecoder);
     }
@@ -68,18 +61,35 @@ pub const HuffDecoder = struct {
         var returnedDepth: u16 = 0;
         const maxInt: u64 = std.math.maxInt(u64);
 
-        for (self.mapping.items) |i| {
-            var value = i.value;
-            var depth = i.depth;
-            var codePoint = i.codePoint;
+        //TODO(cpowys) calculate based off DEPTH_TRHESHOLD assuming 8 bits here for u8 type
+        var bitsWithinThreshold: u8 = 0;
+        const cacheMask: u64 = ~(maxInt << DEPTH_THRESHOLD);
+        if (maxDepth < DEPTH_THRESHOLD) {
+            bitsWithinThreshold = @intCast(u8, bitValue);
+        } else {
+            bitsWithinThreshold = @intCast(u8, cacheMask & bitValue);
+        }
 
-            if (depth <= maxDepth) {
-                var mask = ~(maxInt << @truncate(u6, depth));
-                var truncatedBitValue = bitValue & mask;
-                if (truncatedBitValue == codePoint) {
-                    returnedValue = value;
-                    returnedDepth = depth;
-                    break;
+        var cachedValue = self.cachedMapping[bitsWithinThreshold];
+        if (cachedValue) |v| {
+            returnedValue = v.value;
+            returnedDepth = v.depth;
+        }
+
+        if (returnedValue == null) {
+            for (self.mapping.items) |i| {
+                var value = i.value;
+                var depth = i.depth;
+                var codePoint = i.codePoint;
+
+                if (depth <= maxDepth) {
+                    var mask = ~(maxInt << @truncate(u6, depth));
+                    var truncatedBitValue = bitValue & mask;
+                    if (truncatedBitValue == codePoint) {
+                        returnedValue = value;
+                        returnedDepth = depth;
+                        break;
+                    }
                 }
             }
         }
@@ -261,7 +271,20 @@ const HuffEncoderDecoder = struct {
 
     fn populateDecoderMapWithValue(self: *Self, decoder: *HuffDecoder, depth: u64, codePoint: u64, value: u16) !void {
         _ = self;
-        try decoder.mapping.append(MappingVal{ .value = value, .depth = @truncate(u16, depth), .codePoint = @truncate(u32, codePoint) });
+
+        if (depth < DEPTH_THRESHOLD) {
+            var depthCasted: u3 = @intCast(u3, depth); //TODO(cpowys) these casts aren't generic to the DEPTH_TRHESHOLD assumes 8
+            var codePointCasted: u8 = @intCast(u8, codePoint);
+            var remainingBits: u3 = @intCast(u3, DEPTH_THRESHOLD - depth);
+            var start: u8 = 0;
+            var end: u8 = std.math.pow(u8, 2, remainingBits);
+            while (start < end) : (start += 1) {
+                var key = (start << depthCasted) + codePointCasted;
+                decoder.cachedMapping[key] = CachedMappingValue{ .depth = depthCasted, .value = value };
+            }
+        } else {
+            try decoder.mapping.append(MappingVal{ .value = value, .depth = @truncate(u16, depth), .codePoint = @truncate(u32, codePoint) });
+        }
     }
 };
 
