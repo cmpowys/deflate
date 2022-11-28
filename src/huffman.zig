@@ -318,3 +318,23 @@ test "Test simple huff tree usage with example from sanity check" {
         _ = code;
     }
 }
+
+test "Old method and new method match" {
+    var codes = [19]u32{ 4, 3, 0, 2, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 2, 0 };
+    var bytes = [5]u8{ 0b00001000, 0b00101101, 0b11011011, 0b00100100, 0b00101101 };
+    var bitStream = &BitStream.fromBytes(bytes[0..]);
+    var bitStream2 = &BitStream.fromBytes(bytes[0..]);
+
+    var decoder = try HuffDecoder.initFromCodes(std.testing.allocator, codes[0..]);
+    defer decoder.deinit();
+
+    var huffTree = try HuffEncoderDecoder.generateFromCodes(std.testing.allocator, codes[0..]);
+    defer huffTree.deinit();
+
+    var count: i64 = 0;
+    while (count < 16) : (count += 1) {
+        var codeFromDecoder = decoder.decode(bitStream) orelse unreachable;
+        var codeFromTree = try huffTree.getNextCode(bitStream2);
+        try std.testing.expectEqual(codeFromDecoder, codeFromTree);
+    }
+}
