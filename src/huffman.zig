@@ -3,7 +3,77 @@ const BitStream = @import("bit-stream.zig").BitStream;
 
 pub const Error = error{ UnexpectedErrorAddingHuffNode, InvalidUnderlyingBitStream };
 
-pub const HuffEncoderDecoder = struct {
+const MappingVal = struct { value: u16, depth: u16 };
+
+pub const HuffDecoder = struct {
+    const Self = @This();
+
+    mapping: []MappingVal,
+    allocator: std.mem.Allocator,
+    maxDepth: usize, //TODO(cpowys) get datatype here right 16 should be way more than enough
+
+    fn init(huff: *HuffEncoderDecoder) !*Self {
+        var maxDepth = huff.getMaxDepth();
+        var allocator = huff.allocator;
+
+        std.debug.assert(maxDepth <= 16 and maxDepth > 0); // TODO(cpowys) can we expect this to get too big?
+        var sizeOfMappings = std.math.pow(u32, 2, maxDepth);
+        var mapping = try allocator.alloc(MappingVal, sizeOfMappings);
+        errdefer allocator.free(mapping);
+
+        var decoder = try allocator.create(Self);
+        decoder.mapping = mapping;
+        decoder.allocator = allocator;
+        decoder.maxDepth = @truncate(u16, maxDepth);
+        errdefer (allocator.destroy(decoder));
+        try huff.populateDecoderMaps(decoder);
+
+        return decoder;
+    }
+
+    pub fn debugPrintMappingAsBinary(self: *Self, requiredValue: i32) void {
+        var counter: usize = 0;
+        while (counter < self.mapping.len) : (counter += 1) {
+            var mappingVal = self.mapping[counter];
+            var depth = mappingVal.depth;
+            var value = mappingVal.value;
+
+            if (requiredValue < 0 or requiredValue == value) {
+                std.log.debug("{b}, counter={}, depth={}, value={}", .{ counter, counter, depth, value });
+            }
+        }
+    }
+
+    pub fn deinit(self: *Self) void {
+        self.allocator.free(self.mapping);
+        self.allocator.destroy(self);
+    }
+
+    pub fn initFromCodes(allocator: std.mem.Allocator, codes: []u32) !*Self {
+        var huffEncoderDecoder = try HuffEncoderDecoder.generateFromCodes(allocator, codes);
+        defer huffEncoderDecoder.deinit();
+
+        return HuffDecoder.init(huffEncoderDecoder);
+    }
+
+    pub fn decode(self: *Self, bits: *BitStream) ?u16 {
+        var bitsOld = bits.copy();
+        var maxDepth = @truncate(u16, @minimum(self.maxDepth, bits.getTotalBitsRemainingInStream()));
+
+        if (maxDepth == 0) {
+            return null;
+        }
+
+        var bitValue = bits.getNBits(maxDepth) orelse unreachable;
+        var val = self.mapping[bitValue];
+        bits.* = bitsOld;
+        var b = bits.getNBits(val.depth) orelse unreachable;
+        _ = b;
+        return val.value;
+    }
+};
+
+const HuffEncoderDecoder = struct {
     const Self = @This();
 
     value: ?u16,
@@ -11,7 +81,7 @@ pub const HuffEncoderDecoder = struct {
     right: ?*Self,
     allocator: std.mem.Allocator,
 
-    pub fn generateFromCodes(allocator: std.mem.Allocator, codes: []u32) !*Self {
+    fn generateFromCodes(allocator: std.mem.Allocator, codes: []u32) !*Self {
         std.debug.assert(codes.len > 0);
 
         var codeCounts = try CodeCounts.getCodeCounts(allocator, codes);
@@ -37,7 +107,7 @@ pub const HuffEncoderDecoder = struct {
         return huffTree;
     }
 
-    pub fn init(allocator: std.mem.Allocator) !*Self {
+    fn init(allocator: std.mem.Allocator) !*Self {
         var result = try allocator.create(Self);
         result.left = null;
         result.right = null;
@@ -46,7 +116,7 @@ pub const HuffEncoderDecoder = struct {
         return result;
     }
 
-    pub fn deinit(self: *Self) void {
+    fn deinit(self: *Self) void {
         // TODO(cpowys) need a better representation so we don't have to recursively delete all this
         if (self.left != null) {
             (self.left orelse unreachable).deinit();
@@ -59,7 +129,7 @@ pub const HuffEncoderDecoder = struct {
         self.allocator.destroy(self);
     }
 
-    pub fn addCodePoint(self: *Self, codeLength: u32, code: u32, value: u16) !void {
+    fn addCodePoint(self: *Self, codeLength: u32, code: u32, value: u16) !void {
         std.debug.assert(codeLength > 0);
 
         var depth: u64 = 0;
@@ -94,7 +164,7 @@ pub const HuffEncoderDecoder = struct {
         root.value = value;
     }
 
-    pub fn getNextCode(self: *Self, bits: *BitStream) !u16 {
+    fn getNextCode(self: *Self, bits: *BitStream) !u16 {
         var root = self;
 
         while (true) {
@@ -119,6 +189,61 @@ pub const HuffEncoderDecoder = struct {
                 root = root.right orelse {
                     return Error.InvalidUnderlyingBitStream;
                 };
+            }
+        }
+    }
+
+    fn getMaxDepth(self: Self) u32 {
+        var root = self;
+        var depth: u32 = 0;
+
+        if (root.value == null) {
+            if (root.left != null) {
+                depth += (root.left orelse unreachable).getMaxDepth();
+            }
+
+            if (root.right != null) {
+                depth += (root.right orelse unreachable).getMaxDepth();
+            }
+
+            depth += 1;
+        }
+
+        return depth;
+    }
+
+    //TODO(cpowys) perf and cleanup
+    fn populateDecoderMaps(self: *Self, decoder: *HuffDecoder) std.mem.Allocator.Error!void {
+        try self.populateDecoderMapsWithDepth(decoder, 0, 0);
+    }
+
+    fn populateDecoderMapsWithDepth(self: *Self, decoder: *HuffDecoder, depth: u64, codePoint: u64) std.mem.Allocator.Error!void {
+        if (self.value) |v| {
+            var maxDepth: usize = decoder.maxDepth;
+            std.debug.assert(maxDepth >= depth);
+
+            var remainingDepth: u16 = @truncate(u16, maxDepth - depth);
+            std.debug.assert(remainingDepth >= 0);
+
+            var start: usize = 0;
+            var end: usize = std.math.pow(usize, 2, remainingDepth) - 1;
+            std.debug.assert(start <= end);
+
+            while (start <= end) : (start += 1) {
+                var key = (start << @truncate(u6, depth)) + codePoint;
+                decoder.mapping[key] = MappingVal{ .value = v, .depth = @truncate(u16, depth) };
+            }
+        } else {
+            std.debug.assert(self.left != null or self.right != null);
+
+            if (self.left) |node| {
+                try node.populateDecoderMapsWithDepth(decoder, depth + 1, codePoint);
+            }
+
+            if (self.right) |node| {
+                var mask: u64 = 1;
+                mask <<= @truncate(u5, depth);
+                try node.populateDecoderMapsWithDepth(decoder, depth + 1, mask | codePoint);
             }
         }
     }
@@ -184,12 +309,12 @@ test "Test simple huff tree usage with example from sanity check" {
     var codes = [19]u32{ 4, 3, 0, 2, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 2, 0 };
     var bytes = [5]u8{ 0b00001000, 0b00101101, 0b11011011, 0b00100100, 0b00101101 };
     var bitStream = &BitStream.fromBytes(bytes[0..]);
-    var tree = try HuffEncoderDecoder.generateFromCodes(std.testing.allocator, codes[0..]);
-    defer tree.deinit();
+    var decoder = try HuffDecoder.initFromCodes(std.testing.allocator, codes[0..]);
+    defer decoder.deinit();
 
     var count: i64 = 0;
     while (count < 16) : (count += 1) {
-        var code = try tree.getNextCode(bitStream);
+        var code = decoder.decode(bitStream) orelse unreachable;
         _ = code;
     }
 }

@@ -12,6 +12,14 @@ pub const BitStream = struct {
         return BitStream{ .bytes = bytes, .bitPosition = 0, .currentBytes = null, .bitsInByte = 0 };
     }
 
+    pub fn copy(self: *Self) Self {
+        return BitStream{ .bytes = self.bytes, .bitPosition = self.bitPosition, .currentBytes = self.currentBytes, .bitsInByte = self.bitsInByte };
+    }
+
+    pub fn getTotalBitsRemainingInStream(self: *Self) usize {
+        return self.bytes.len + self.bitsInByte - self.bitPosition;
+    }
+
     pub fn getNBits(self: *Self, numBits: u32) ?u64 {
         if (numBits == 0) return 0;
 

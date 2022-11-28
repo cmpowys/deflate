@@ -1,6 +1,7 @@
 const std = @import("std");
 const deflate = @import("deflate.zig");
 const bstream = @import("bit-stream.zig");
+const HuffDecoder = @import("huffman.zig").HuffDecoder;
 const HuffEncoderDecoder = @import("huffman.zig").HuffEncoderDecoder;
 
 fn profileBitStream(bitStreamStruct: anytype) !void {
@@ -64,7 +65,7 @@ fn profileDeflate() !void {
 }
 
 fn profileHuffTreeDecode() !void {
-    const N = 5000000;
+    const N = 1000000;
     var allocator = std.heap.page_allocator;
     var codes = [19]u32{ 4, 3, 0, 2, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 2, 0 };
     var bytes = [_]u8{ 0b00001000, 0b00101101, 0b11011011, 0b00100100, 0b00101101 };
@@ -78,25 +79,55 @@ fn profileHuffTreeDecode() !void {
     }
 
     var bitStream = &bstream.BitStream.fromBytes(list.items);
+    var decoder = try HuffDecoder.initFromCodes(allocator, codes[0..]);
+    defer decoder.deinit();
 
-    var tree = try HuffEncoderDecoder.generateFromCodes(allocator, codes[0..]);
-    defer tree.deinit();
+    //decoder.debugPrintMappingAsBinary(17);
+
+    // var codesOld = std.ArrayList(u16).init(allocator);
+    // defer codesOld.deinit();
+    // var codesNew = std.ArrayList(u16).init(allocator);
+    // defer codesNew.deinit();
 
     var before = std.time.milliTimestamp();
 
     iteration = 0;
     const NUM_CODE_POINTS_PER_ITERATION = 16;
     while (iteration < N * NUM_CODE_POINTS_PER_ITERATION) : (iteration += 1) {
-        var code = try tree.getNextCode(bitStream);
+        var code = decoder.decode(bitStream) orelse unreachable;
+        //try codesNew.append(code);
         _ = code;
     }
 
     var after = std.time.milliTimestamp();
-    std.log.debug("{}ms", .{after - before});
+    std.log.debug("New Method : {}ms", .{after - before});
+
+    bitStream = &bstream.BitStream.fromBytes(list.items);
+    var huffTree = try HuffEncoderDecoder.generateFromCodes(allocator, codes[0..]);
+    defer huffTree.deinit();
+
+    before = std.time.milliTimestamp();
+
+    iteration = 0;
+    while (iteration < N * NUM_CODE_POINTS_PER_ITERATION) : (iteration += 1) {
+        var code = try huffTree.getNextCode(bitStream);
+        //try codesOld.append(code);
+        _ = code;
+    }
+
+    after = std.time.milliTimestamp();
+    std.log.debug("Old Method : {}ms", .{after - before});
+
+    // std.debug.assert(codesNew.items.len == codesOld.items.len);
+    // var counter : usize = 0;
+    // while(counter < codesNew.items.len) : (counter += 1) {
+    //     //std.log.debug("counter={}, new={}, old={}", .{counter, codesNew.items[counter], codesOld.items[counter]});
+    //     std.debug.assert(codesNew.items[counter] == codesOld.items[counter]);
+    // }
 }
 
 pub fn main() !void {
     // try profileBitStream(bstream.BitStream);
-    // try profileDeflate();
-    try profileHuffTreeDecode();
+    try profileDeflate();
+    //try profileHuffTreeDecode();
 }
