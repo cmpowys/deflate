@@ -64,6 +64,17 @@ fn profileDeflate() !void {
     std.log.debug("{}ms", .{after - before});
 }
 
+fn profileApartmentsPngDeflateSection() !void {
+    // const file = try std.fs.cwd().openFile("deflate-test", .{.read = true});
+    // defer file.close();
+    var allocator = std.heap.page_allocator;
+    const bytes = try std.fs.cwd().readFileAlloc(allocator, "deflate-test", 1024*1024*1024);
+    defer allocator.free(bytes);
+
+    var outputStream = try deflate.decompress(&allocator, bytes);
+    allocator.free(outputStream);
+}
+
 fn profileHuffTreeDecode() !void {
     const N = 1000000;
     var allocator = std.heap.page_allocator;
@@ -128,6 +139,7 @@ fn profileHuffTreeDecode() !void {
 
 pub fn main() !void {
     // try profileBitStream(bstream.BitStream);
-    try profileDeflate();
+    //try profileDeflate();
     //try profileHuffTreeDecode();
+    try profileApartmentsPngDeflateSection();
 }
