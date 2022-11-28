@@ -17,7 +17,7 @@ pub const BitStream = struct {
     }
 
     pub fn getTotalBitsRemainingInStream(self: *Self) usize {
-        return self.bytes.len + self.bitsInByte - self.bitPosition;
+        return (self.bytes.len * 8) + self.bitsInByte - self.bitPosition;
     }
 
     pub fn getNBits(self: *Self, numBits: u32) ?u64 {
